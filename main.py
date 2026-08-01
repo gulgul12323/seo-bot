@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 
 # 1. fetch_data 모듈 안전 임포트
@@ -15,10 +16,52 @@ except Exception:
     def generate_seo_markdown(data):
         return "# 2026 청년 알짜 지원금 안내\n\n최신 청년 지원금 리포트입니다."
 
+def build_static_index():
+    posts_dir = "posts"
+    posts_data = []
+    
+    if os.path.exists(posts_dir):
+        files = sorted([f for f in os.listdir(posts_dir) if f.endswith(".md")], reverse=True)
+        for file_name in files:
+            file_path = os.path.join(posts_dir, file_name)
+            with open(file_path, "r", encoding="utf-8") as f:
+                posts_data.append(f.read())
+
+    # 마크다운 리스트를 JSON 형태로 변환
+    json_posts = json.dumps(posts_data, ensure_ascii=False)
+
+    # index.html 템플릿
+    template = """
+
+
+
+
+2030 청년 알짜 지원금 매일 알리미
+
+
+
+
+
+
+    
+        🔔 2030 청년 알짜 지원금 매일 알리미
+        놓치면 손해보는 전국 & 지자체 청년 혜택 리포트
+    
+    
+
+
+
+
+"""
+
+    final_html = template.replace("__POSTS_DATA__", json_posts)
+    
+    with open("index.html", "w", encoding="utf-8") as f:
+        f.write(final_html)
+
 def main():
     raw_data = fetch_subsidy_data()
     
-    # generate_report가 dict 형태(.get)를 요구하므로 데이터 타입 안전 처리
     if isinstance(raw_data, list):
         data = raw_data[0] if len(raw_data) > 0 else {}
     elif isinstance(raw_data, dict):
@@ -35,7 +78,11 @@ def main():
     with open(filename, "w", encoding="utf-8") as f:
         f.write(markdown_content)
     
-    print(f"새로운 포스팅 마크다운 파일 생성 완료: {filename}")
+    print(f"새로운 마크다운 포스팅 생성 완료: {filename}")
+    
+    # 정적 index.html 새로 빌드
+    build_static_index()
+    print("index.html 블로그 메인 페이지 구워내기 완료!")
 
 if __name__ == "__main__":
     main()
