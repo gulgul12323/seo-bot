@@ -148,6 +148,57 @@ def create_sitemap_xml():
         f.write(xml_content.strip())
     print("✅ sitemap.xml 자동 생성 완료!")
 
+def create_rss_xml():
+    """
+    네이버 서치어드바이저 수집용 표준 rss.xml을 자동 생성합니다.
+    """
+    domain = "https://youthzip.com"
+    pub_date = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0900')
+    
+    items_xml = f"""
+    <item>
+        <title><![CDATA[2026 청년 알짜 지원금 및 혜택 안내]]></title>
+        <link>{domain}/</link>
+        <description><![CDATA[매일 업데이트되는 전국 청년 지원금 및 알짜 정책 모음집입니다.]]></description>
+        <pubDate>{pub_date}</pubDate>
+    </item>"""
+
+    if os.path.exists("posts.json"):
+        try:
+            with open("posts.json", "r", encoding="utf-8") as f:
+                posts = json.load(f)
+                for post in posts[:10]:
+                    content = post.get("content", "")
+                    title = "청년 지원금 리포트"
+                    for line in content.split("\n"):
+                        if line.startswith("# "):
+                            title = line.replace("# ", "").strip()
+                            break
+                    items_xml += f"""
+    <item>
+        <title><![CDATA[{title}]]></title>
+        <link>{domain}/</link>
+        <description><![CDATA[{title} - 최신 청년 혜택 정보]]></description>
+        <pubDate>{pub_date}</pubDate>
+    </item>"""
+        except Exception as e:
+            print(f"⚠️ RSS 아이템 생성 예외: {e}")
+
+    rss_content = f"""<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+    <channel>
+        <title><![CDATA[YouthZip - 청년 지원금 한눈에 보기]]></title>
+        <link>{domain}</link>
+        <description><![CDATA[매일 업데이트되는 전국 청년 지원금 및 알짜 혜택 정보]]></description>
+        <language>ko</language>
+        {items_xml}
+    </channel>
+</rss>"""
+
+    with open("rss.xml", "w", encoding="utf-8") as f:
+        f.write(rss_content.strip())
+    print("✅ rss.xml 자동 생성 완료!")
+
 def main():
     # 1) 지원금 데이터 가져오기
     raw_data = get_subsidy_data()
@@ -205,10 +256,11 @@ def main():
     with open("posts.json", "w", encoding="utf-8") as f:
         json.dump(posts_list, f, ensure_ascii=False, indent=2)
 
-    # 7) sitemap.xml 파일 생성
+    # 7) 검색엔진용 XML 파일 생성 (sitemap.xml 및 rss.xml)
     create_sitemap_xml()
+    create_rss_xml()
 
-    print("✅ 모든 데이터 및 sitemap.xml 업데이트 성공!")
+    print("✅ 모든 데이터, sitemap.xml, rss.xml 업데이트 성공!")
 
 if __name__ == "__main__":
     main()
