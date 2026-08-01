@@ -10,7 +10,7 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 깃허브 저장소 쓰기 권한 명시
+      contents: write
     steps:
       - name: 코드 가져오기
         uses: actions/checkout@v4
@@ -30,7 +30,11 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python main.py
 
-      - name: 생성된 포스팅 파일 Git 저장소에 자동 커밋 및 푸시
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "auto: publish daily SEO report and update index.html"
+      - name: 생성된 포스팅 파일 Git 저장소에 커밋 및 푸시
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git pull origin main --rebase --autostash
+          git add .
+          git commit -m "auto: publish daily SEO report and update index.html" || echo "No changes to commit"
+          git push origin main
