@@ -127,6 +127,27 @@ def create_summary_table_image(data, output_path):
     print(f"📸 요약 카드 이미지 생성 완료: {output_path}")
     return output_path
 
+def create_sitemap_xml():
+    """
+    구글 서치콘솔 및 검색엔진 수집용 표준 sitemap.xml을 자동 생성합니다.
+    """
+    domain = "https://youthzip.com"
+    now_date = datetime.now().strftime("%Y-%m-%d")
+    
+    xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>{domain}/</loc>
+    <lastmod>{now_date}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>"""
+
+    with open("sitemap.xml", "w", encoding="utf-8") as f:
+        f.write(xml_content.strip())
+    print("✅ sitemap.xml 자동 생성 완료!")
+
 def main():
     # 1) 지원금 데이터 가져오기
     raw_data = get_subsidy_data()
@@ -184,7 +205,10 @@ def main():
     with open("posts.json", "w", encoding="utf-8") as f:
         json.dump(posts_list, f, ensure_ascii=False, indent=2)
 
-    print("✅ posts.json 데이터 파일 업데이트 성공!")
+    # 7) sitemap.xml 파일 생성
+    create_sitemap_xml()
+
+    print("✅ 모든 데이터 및 sitemap.xml 업데이트 성공!")
 
 if __name__ == "__main__":
     main()
