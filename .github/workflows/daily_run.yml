@@ -10,12 +10,10 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 깃허브 저장소 쓰기 권한 부여
+      contents: write
     steps:
       - name: 코드 가져오기
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # 전체 히스토리를 가져와 충돌 방지
 
       - name: 파이썬 환경 설정
         uses: actions/setup-python@v5
@@ -32,12 +30,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python main.py
 
-      - name: 자동 커밋 및 강제 동기화 푸시
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add .
-          git commit -m "auto: publish daily SEO report and update index.html" || echo "No changes to commit"
-          git fetch origin main
-          git rebase origin main || git rebase --skip
-          git push origin main
+      - name: 자동 커밋 및 푸시
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "auto: publish daily SEO report and update index.html"
