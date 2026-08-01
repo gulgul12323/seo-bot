@@ -17,7 +17,6 @@ except Exception:
         return "# 2026 청년 알짜 지원금 안내\n\n최신 청년 지원금 리포트입니다."
 
 def main():
-    # 1) 지원금 데이터 가져오기 & 마크다운 생성
     raw_data = fetch_subsidy_data()
     
     if isinstance(raw_data, list):
@@ -29,7 +28,6 @@ def main():
         
     markdown_content = generate_seo_markdown(data)
     
-    # 2) posts/ 폴더에 마크다운 파일 저장
     os.makedirs("posts", exist_ok=True)
     now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
     filename = f"posts/{now}-subsidy-report.md"
@@ -37,23 +35,20 @@ def main():
     with open(filename, "w", encoding="utf-8") as f:
         f.write(markdown_content)
     
-    print(f"새로운 마크다운 포스팅 생성 완료: {filename}")
-    
-    # 3) posts.json 파일 업데이트 (index.html은 절대 건드리지 않음!)
+    # posts.json 업데이트 (index.html은 절대 건드리지 않음)
     posts_list = []
-    files = sorted([f for f in os.listdir("posts") if f.endswith(".md")], reverse=True)
-    for f_name in files:
-        file_path = os.path.join("posts", f_name)
-        with open(file_path, "r", encoding="utf-8") as f:
-            posts_list.append({
-                "filename": f_name,
-                "content": f.read()
-            })
+    if os.path.exists("posts"):
+        files = sorted([f for f in os.listdir("posts") if f.endswith(".md")], reverse=True)
+        for f_name in files:
+            file_path = os.path.join("posts", f_name)
+            with open(file_path, "r", encoding="utf-8") as f:
+                posts_list.append({
+                    "filename": f_name,
+                    "content": f.read()
+                })
 
     with open("posts.json", "w", encoding="utf-8") as f:
         json.dump(posts_list, f, ensure_ascii=False, indent=2)
-        
-    print("posts.json 데이터 파일 업데이트 성공!")
 
 if __name__ == "__main__":
     main()
