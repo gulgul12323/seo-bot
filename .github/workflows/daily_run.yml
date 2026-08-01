@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: 코드 가져오기
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: 파이썬 환경 설정
         uses: actions/setup-python@v5
@@ -32,10 +30,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python main.py
 
-      - name: 생성된 포스팅 파일 Git 저장소에 커밋 및 푸시
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add .
-          git commit -m "auto: publish daily SEO report and update index.html" || echo "No changes to commit"
-          git push origin main --force
+      - name: 자동 커밋 및 푸시 (공식 깃허브 액션)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "auto: publish daily SEO report and update index.html"
