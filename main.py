@@ -16,7 +16,16 @@ except Exception:
         return "# 2026 청년 알짜 지원금 안내\n\n최신 청년 지원금 리포트입니다."
 
 def main():
-    data = fetch_subsidy_data()
+    raw_data = fetch_subsidy_data()
+    
+    # generate_report가 dict 형태(.get)를 요구하므로 데이터 타입 안전 처리
+    if isinstance(raw_data, list):
+        data = raw_data[0] if len(raw_data) > 0 else {}
+    elif isinstance(raw_data, dict):
+        data = raw_data
+    else:
+        data = {}
+        
     markdown_content = generate_seo_markdown(data)
     
     os.makedirs("posts", exist_ok=True)
