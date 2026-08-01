@@ -1,5 +1,6 @@
 import json
 import random
+import os
 from datetime import datetime
 
 def is_subsidy_valid(subsidy):
@@ -40,7 +41,7 @@ def is_subsidy_valid(subsidy):
 def get_subsidy_data():
     """
     전국 광역/기초 지자체 및 중앙부처의 고가치(High-Value) 청년 지원금 DB
-    현재 시점에 유효한 알짜 정보만 선별하여 무작위 추출합니다.
+    이전 발행된 포스팅을 검사하여 '중복되지 않은 새로운 지원금'만 선별 추출합니다.
     """
     data_pool = [
         # [부산광역시]
@@ -138,8 +139,37 @@ def get_subsidy_data():
             ]
         }
     ]
-    
-    # 마감된 지원금 1차 걸러내기
+
+    # 1. 이미 작성된 포스팅(posts.json 및 posts/ 폴더) 스캔하여 사용된 지원금 제목 수집
+    posted_titles = set()
+    if os.path.exists("posts.json"):
+        try:
+            with open("posts.json", "r", encoding="utf-8") as f:
+                posts_data = json.load(f)
+                for post in posts_data:
+                    content = post.get("content", "")
+                    for group in data_pool:
+                        for sub in group["subsidies"]:
+                            if sub["title"] in content:
+                                posted_titles.add(sub["title"])
+        except Exception as e:
+            print(f"⚠️ posts.json 읽기 오류: {e}")
+
+    if os.path.exists("posts"):
+        try:
+            for fname in os.listdir("posts"):
+                if fname.endswith(".md"):
+                    fpath = os.path.join("posts", fname)
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        for group in data_pool:
+                            for sub in group["subsidies"]:
+                                if sub["title"] in content:
+                                    posted_titles.add(sub["title"])
+        except Exception as e:
+            print(f"⚠️ posts 폴더 스캔 오류: {e}")
+
+    # 2. 오늘 시점 유효한 지원금만 1차 필터링
     valid_data_pool = []
     for group in data_pool:
         valid_subsidies = [s for s in group["subsidies"] if is_subsidy_valid(s)]
@@ -147,13 +177,26 @@ def get_subsidy_data():
             group_copy = group.copy()
             group_copy["subsidies"] = valid_subsidies
             valid_data_pool.append(group_copy)
-            
-    # 유효한 그룹 중 무작위 1개 추출 (없을 경우 기본 그룹 반환)
-    if valid_data_pool:
+
+    # 3. 작성된 적 없는 '신규 지원금'만 2차 필터링
+    unposted_data_pool = []
+    for group in valid_data_pool:
+        unposted_subsidies = [s for s in group["subsidies"] if s["title"] not in posted_titles]
+        if unposted_subsidies:
+            group_copy = group.copy()
+            group_copy["subsidies"] = unposted_subsidies
+            unposted_data_pool.append(group_copy)
+
+    # 4. 신규 지원금이 남아있으면 우선 추출, 모두 작성되었으면 전체 중 순환 선택
+    if unposted_data_pool:
+        selected_data = random.choice(unposted_data_pool)
+        print("✨ [신규] 아직 블로그에 올리지 않은 새로운 지원금을 선택했습니다.")
+    elif valid_data_pool:
         selected_data = random.choice(valid_data_pool)
+        print("🔄 [순환] 모든 지원금이 작성 완료되어 재순환 선택했습니다.")
     else:
         selected_data = data_pool[-1]
-        
+
     return selected_data
 
 # 모듈 호출 호환성을 위한 별칭 설정
