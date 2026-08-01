@@ -16,49 +16,8 @@ except Exception:
     def generate_seo_markdown(data):
         return "# 2026 청년 알짜 지원금 안내\n\n최신 청년 지원금 리포트입니다."
 
-def build_index_html():
-    posts_dir = "posts"
-    posts_data = []
-    
-    if os.path.exists(posts_dir):
-        files = sorted([f for f in os.listdir(posts_dir) if f.endswith(".md")], reverse=True)
-        for file_name in files:
-            file_path = os.path.join(posts_dir, file_name)
-            with open(file_path, "r", encoding="utf-8") as f:
-                posts_data.append(f.read())
-
-    json_posts = json.dumps(posts_data, ensure_ascii=False)
-
-    # 파이썬 문법과 웹 CSS 충돌을 완전 차단한 안전 템플릿
-    html_template = """
-
-
-
-
-2030 청년 알짜 지원금 매일 알리미
-
-
-
-
-
-
-    
-        🔔 2030 청년 알짜 지원금 매일 알리미
-        놓치면 손해보는 전국 & 지자체 청년 혜택 리포트
-    
-    
-
-
-
-
-"""
-
-    final_html = html_template.replace("__POSTS_DATA__", json_posts)
-
-    with open("index.html", "w", encoding="utf-8") as f:
-        f.write(final_html)
-
 def main():
+    # 1) 지원금 데이터 가져오기 & 마크다운 생성
     raw_data = fetch_subsidy_data()
     
     if isinstance(raw_data, list):
@@ -70,6 +29,7 @@ def main():
         
     markdown_content = generate_seo_markdown(data)
     
+    # 2) posts/ 폴더에 마크다운 파일 저장
     os.makedirs("posts", exist_ok=True)
     now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
     filename = f"posts/{now}-subsidy-report.md"
@@ -79,9 +39,21 @@ def main():
     
     print(f"새로운 마크다운 포스팅 생성 완료: {filename}")
     
-    # 완성형 index.html 직접 생성
-    build_index_html()
-    print("index.html 블로그 메인 페이지 빌드 완료!")
+    # 3) posts.json 파일 업데이트 (index.html은 절대 건드리지 않음!)
+    posts_list = []
+    files = sorted([f for f in os.listdir("posts") if f.endswith(".md")], reverse=True)
+    for f_name in files:
+        file_path = os.path.join("posts", f_name)
+        with open(file_path, "r", encoding="utf-8") as f:
+            posts_list.append({
+                "filename": f_name,
+                "content": f.read()
+            })
+
+    with open("posts.json", "w", encoding="utf-8") as f:
+        json.dump(posts_list, f, ensure_ascii=False, indent=2)
+        
+    print("posts.json 데이터 파일 업데이트 성공!")
 
 if __name__ == "__main__":
     main()
