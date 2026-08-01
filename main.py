@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 
-# 1. fetch_data 모듈 안전 임포트 (함수명이 달라도 자동 감지)
+# 1. fetch_data 모듈 안전 임포트
 try:
     from fetch_data import fetch_subsidy_data
 except ImportError:
@@ -46,7 +46,10 @@ def update_index_html():
             content = f.read()
             posts_data.append(content)
 
-    html_content = f"""
+    json_posts = json.dumps(posts_data, ensure_ascii=False)
+
+    # 안전한 HTML 템플릿 (CSS/JS 안전 분리)
+    html_content = """
 
 
 
@@ -67,7 +70,8 @@ def update_index_html():
 
 
 
-"""
+
+""".replace("__POSTS_DATA__", json_posts)
 
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(html_content)
