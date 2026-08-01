@@ -5,10 +5,19 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def generate_seo_markdown(data):
-    today = datetime.now().strftime("%Y-%m-%d")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("⚠️ OPENAI_API_KEY가 설정되지 않았습니다.")
+        return "# 2026 청년 지원금 안내\n\n최신 지원금 리포트를 준비 중입니다."
+
+    client = OpenAI(api_key=api_key)
+
+    # 오늘 날짜 정보 구하기
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_korean = datetime.now().strftime("%Y년 %m월 %d일")
+
     scope_type = data.get("scope_type", "national")
     region_name = data.get("region_name", "전국")
 
@@ -20,11 +29,16 @@ def generate_seo_markdown(data):
 
     prompt = f"""
     너는 2030 청년들과 가장 친근하게 소통하는 혜택 정보 전문 에디터야.
-    아래 데이터를 바탕으로, 읽는 재미가 있고 3초 만에 시선을 사로잡는 마크다운 블로그 포스트를 작성해 줘.
+    오늘 날짜는 **{today_korean} ({today_str})** 이다.
+    아래 수집 데이터를 바탕으로, 읽는 재미가 있고 3초 만에 시선을 사로잡는 마크다운 블로그 포스트를 작성해 줘.
 
     [수집 데이터]
     타겟: {region_name} ({scope_type})
     내용: {json.dumps(data.get("subsidies", []), ensure_ascii=False, indent=2)}
+
+    [날짜 및 기한 필터링 절대 규칙]
+    1. 오늘 날짜({today_korean})를 기준으로 이미 신청 기한이 지난(마감된) 지원금은 포스팅 대상에서 완전히 제외할 것.
+    2. 현재 신청 접수 중이거나 상시/정기 모집 가능한 지원금 위주로만 작성할 것.
 
     [작성 규칙 - 엄격 적용]
     1. **제목 어그로 극대화:** 
@@ -50,20 +64,23 @@ def generate_seo_markdown(data):
     - YAML Frontmatter (title, description, date, tags)
     - ## 🚨 30초 요약: 안 받아가면 진짜 손해 보는 꿀혜택
     - ## 💡 지원금별 정밀 분석 & 신청 가이드
-      * 각 지원금마다 ### 1. [지원금명] 구조로 작성
-      * 지원 대상 및 핵심 조건
-      * 💰 실제 수혜 금액 시뮬레이션 계산 예시
-      * 📄 필수 제출 서류 목록 & 온라인 발급처
-      * ⚠️ 가장 많이 탈락하는 실제 실수 사례 & 꿀팁
-      * 🔗 신청 경로 & 단계별 방법 (Step-by-Step)
+       * 각 지원금마다 ### 1. [지원금명] 구조로 작성
+       * 지원 대상 및 핵심 조건
+       * 💰 실제 수혜 금액 시뮬레이션 계산 예시
+       * 📄 필수 제출 서류 목록 & 온라인 발급처
+       * ⚠️ 가장 많이 탈락하는 실제 실수 사례 & 꿀팁
+       * 🔗 신청 경로 & 단계별 방법 (Step-by-Step)
     - ## 📊 한눈에 보는 혜택 조건 비교표
     - ## ❓ 자주 묻는 질문 FAQ (실질적 질문 2개)
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.8
-    )
-    
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.8
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"❌ OpenAI API 호출 실패: {e}")
+        return f"# [{region_name}] 2030 청년 지원금 소식\n\n최신 청년 지원금 정보를 준비 중입니다."
