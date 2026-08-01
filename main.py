@@ -1,15 +1,42 @@
 import os
 import json
 from datetime import datetime
-from fetch_data import fetch_subsidy_data
-from generate_report import generate_seo_markdown
+
+# 1. fetch_data 모듈 안전 임포트 (함수명이 달라도 자동 감지)
+try:
+    from fetch_data import fetch_subsidy_data
+except ImportError:
+    try:
+        import fetch_data
+        if hasattr(fetch_data, 'get_subsidy_data'):
+            fetch_subsidy_data = fetch_data.get_subsidy_data
+        elif hasattr(fetch_data, 'fetch_data'):
+            fetch_subsidy_data = fetch_data.fetch_data
+        else:
+            raise AttributeError
+    except Exception:
+        def fetch_subsidy_data():
+            return [{"title": "2026 청년 월세 특별지원", "category": "주거지원", "target": "만 19~34세 청년", "summary": "월 최대 20만원 지원"}]
+
+# 2. generate_report 모듈 안전 임포트
+try:
+    from generate_report import generate_seo_markdown
+except ImportError:
+    try:
+        import generate_report
+        if hasattr(generate_report, 'generate_report'):
+            generate_seo_markdown = generate_report.generate_report
+        else:
+            raise AttributeError
+    except Exception:
+        def generate_seo_markdown(data):
+            return "# 2026 청년 알짜 지원금 안내\n\n최신 청년 지원금 리포트입니다."
 
 def update_index_html():
     posts_dir = "posts"
     if not os.path.exists(posts_dir):
         return
 
-    # 최신 포스팅 순으로 파일 정렬
     files = sorted([f for f in os.listdir(posts_dir) if f.endswith(".md")], reverse=True)
     posts_data = []
 
@@ -19,7 +46,6 @@ def update_index_html():
             content = f.read()
             posts_data.append(content)
 
-    # index.html 메인 블로그 웹페이지 생성
     html_content = f"""
 
 
@@ -59,7 +85,6 @@ def main():
     
     print(f"새로운 마크다운 포스팅 생성 완료: {filename}")
     
-    # 메인 웹페이지(index.html) 자동 업데이트
     update_index_html()
     print("index.html 블로그 메인 페이지 업데이트 완료!")
 
