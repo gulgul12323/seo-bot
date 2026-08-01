@@ -23,7 +23,7 @@ jobs:
       - name: 필수 라이브러리 설치
         run: |
           python -m pip install --upgrade pip
-          pip install openai python-dotenv requests
+          pip install openai python-dotenv requests Pillow
 
       - name: AI 포스팅 자동 생성 실행
         env:
@@ -33,4 +33,4 @@ jobs:
       - name: 자동 커밋 및 푸시
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "auto: publish daily SEO report and update index.html"
+          commit_message: "auto: publish daily SEO report, update posts.json and images"
