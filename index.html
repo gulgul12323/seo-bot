@@ -80,7 +80,12 @@
 
                 container.innerHTML = '';
                 posts.forEach(post => {
-                    const cleanMd = post.content.replace(/^---[\s\S]*?---/, '');
+                    // title, description, date, tags 등의 메타데이터 라인과 --- 제거
+                    let cleanMd = post.content
+                        .replace(/^---[\s\S]*?---/, '')
+                        .replace(/^(title|description|date|tags):\s*"?.*?"?/gm, '')
+                        .trim();
+
                     const card = document.createElement('article');
                     card.className = 'post-card markdown-body';
                     card.innerHTML = marked.parse(cleanMd);
@@ -88,7 +93,7 @@
                 });
             } catch (e) {
                 console.error(e);
-                container.innerHTML = '<div class="post-card"><p>지원금 리포트를 불러오는 중입니다.</p></div>';
+                container.innerHTML = '<div class="post-card"><p>지원금 리포트를 준비 중입니다.</p></div>';
             }
         }
         loadPosts();
