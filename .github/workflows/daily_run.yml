@@ -4,7 +4,7 @@ on:
   schedule:
     # 매일 한국 시간 오전 8시 자동 실행 (UTC 기준 23:00)
     - cron: '0 23 * * *'
-  workflow_dispatch: # 수동 실행 버튼 생성
+  workflow_dispatch: # 수동 실행 버튼
 
 jobs:
   build-and-publish:
@@ -32,6 +32,7 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add add.
+          git add .
           git commit -m "auto: publish daily SEO report and update index.html" || echo "No changes to commit"
-          git push
+          git pull --rebase origin main
+          git push origin main
