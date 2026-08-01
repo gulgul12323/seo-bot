@@ -1,5 +1,6 @@
 import os
 import json
+import urllib.request
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
@@ -29,6 +30,31 @@ except Exception:
     def generate_seo_markdown(data):
         return "# 2026 청년 알짜 지원금 안내\n\n최신 청년 지원금 리포트입니다."
 
+def get_korean_font(size, is_bold=False):
+    """
+    GitHub Actions 리눅스 서버에 한글 폰트가 없을 때
+    구글 폰트(나눔고딕)를 구글 공식 저장소에서 자동 다운로드하여 적용합니다.
+    """
+    font_filename = "NanumGothic-Bold.ttf" if is_bold else "NanumGothic-Regular.ttf"
+    font_path = os.path.join(".", font_filename)
+
+    if not os.path.exists(font_path):
+        url = (
+            "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Bold.ttf"
+            if is_bold else
+            "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+        )
+        try:
+            print(f"📥 한글 폰트 자동 다운로드 실행: {font_filename}")
+            urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            print(f"⚠️ 폰트 다운로드 실패: {e}")
+
+    try:
+        return ImageFont.truetype(font_path, size)
+    except Exception:
+        return ImageFont.load_default()
+
 def create_summary_table_image(data, output_path):
     """
     수집된 지원금 데이터를 바탕으로 요약 카드뉴스 이미지(PNG)를 자동 생성합니다.
@@ -38,8 +64,8 @@ def create_summary_table_image(data, output_path):
         return None
 
     # 이미지 기본 규격 설정
-    img_width = 800
-    card_height = 110
+    img_width = 850
+    card_height = 120
     header_height = 90
     padding = 20
     img_height = header_height + (len(subsidies) * card_height) + padding
@@ -48,13 +74,11 @@ def create_summary_table_image(data, output_path):
     image = Image.new("RGB", (img_width, img_height), color="#F8FAFC")
     draw = ImageDraw.Draw(image)
 
-    # 폰트 예외 처리 (기본 시스템 폰트 로드)
-    try:
-        title_font = ImageFont.truetype("arial.ttf", 22)
-        text_font = ImageFont.truetype("arial.ttf", 15)
-        bold_font = ImageFont.truetype("arialbd.ttf", 16)
-    except Exception:
-        title_font = text_font = bold_font = ImageFont.load_default()
+    # 폰트 불러오기 (나눔고딕 자동 적용으로 한글 깨짐 원천 방지)
+    title_font = get_korean_font(21, is_bold=True)
+    card_title_font = get_korean_font(16, is_bold=True)
+    text_font = get_korean_font(14, is_bold=False)
+    bold_font = get_korean_font(15, is_bold=True)
 
     # 상단 헤더 박스 생성 (어두운 블루계열)
     draw.rectangle([(0, 0), (img_width, header_height - 10)], fill="#1E293B")
@@ -77,10 +101,10 @@ def create_summary_table_image(data, output_path):
         amount_text = f"• 혜택: {item.get('amount', '지자체 공고 참조')}"
         deadline_text = f"• 마감: {item.get('deadline', '상시/지정기간')}"
 
-        draw.text((40, y_offset + 12), title_text, fill="#0F172A", font=bold_font)
-        draw.text((40, y_offset + 38), target_text, fill="#475569", font=text_font)
-        draw.text((40, y_offset + 58), amount_text, fill="#2563EB", font=bold_font) # 혜택 강조 색상
-        draw.text((450, y_offset + 58), deadline_text, fill="#DC2626", font=text_font) # 마감 강조 색상
+        draw.text((40, y_offset + 12), title_text, fill="#0F172A", font=card_title_font)
+        draw.text((40, y_offset + 40), target_text, fill="#475569", font=text_font)
+        draw.text((40, y_offset + 65), amount_text, fill="#2563EB", font=bold_font) # 혜택 강조 색상
+        draw.text((520, y_offset + 65), deadline_text, fill="#DC2626", font=bold_font) # 마감 강조 색상
 
         y_offset += card_height
 
