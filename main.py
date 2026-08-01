@@ -5,7 +5,7 @@ from datetime import datetime
 # 1. fetch_data 모듈 안전 임포트
 try:
     from fetch_data import fetch_subsidy_data
-except ImportError:
+except Exception:
     try:
         import fetch_data
         if hasattr(fetch_data, 'get_subsidy_data'):
@@ -21,7 +21,7 @@ except ImportError:
 # 2. generate_report 모듈 안전 임포트
 try:
     from generate_report import generate_seo_markdown
-except ImportError:
+except Exception:
     try:
         import generate_report
         if hasattr(generate_report, 'generate_report'):
@@ -34,22 +34,18 @@ except ImportError:
 
 def update_index_html():
     posts_dir = "posts"
-    if not os.path.exists(posts_dir):
-        return
-
-    files = sorted([f for f in os.listdir(posts_dir) if f.endswith(".md")], reverse=True)
     posts_data = []
-
-    for file_name in files:
-        file_path = os.path.join(posts_dir, file_name)
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
-            posts_data.append(content)
+    if os.path.exists(posts_dir):
+        files = sorted([f for f in os.listdir(posts_dir) if f.endswith(".md")], reverse=True)
+        for file_name in files:
+            file_path = os.path.join(posts_dir, file_name)
+            with open(file_path, "r", encoding="utf-8") as f:
+                posts_data.append(f.read())
 
     json_posts = json.dumps(posts_data, ensure_ascii=False)
 
-    # 안전한 HTML 템플릿 (CSS/JS 안전 분리)
-    html_content = """
+    # 파이썬 중괄호 충돌을 완전 차단한 안전한 HTML 템플릿
+    html_template = """
 
 
 
@@ -70,11 +66,12 @@ def update_index_html():
 
 
 
+"""
 
-""".replace("__POSTS_DATA__", json_posts)
+    final_html = html_template.replace("__POSTS_JSON__", json_posts)
 
     with open("index.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
+        f.write(final_html)
 
 def main():
     data = fetch_subsidy_data()
