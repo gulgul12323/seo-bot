@@ -58,55 +58,68 @@ def get_korean_font(size, is_bold=False):
 def create_summary_table_image(data, output_path):
     """
     수집된 지원금 데이터를 바탕으로 요약 카드뉴스 이미지(PNG)를 자동 생성합니다.
+    (독립 행 배치를 적용하여 글자 겹침 현상을 원천 방지합니다.)
     """
     subsidies = data.get("subsidies", [])
     if not subsidies:
         return None
 
-    # 이미지 기본 규격 설정
-    img_width = 850
-    card_height = 120
-    header_height = 90
-    padding = 20
-    img_height = header_height + (len(subsidies) * card_height) + padding
+    # 시원한 해상도 및 여백 레이아웃 설정
+    img_width = 950
+    card_height = 165
+    card_gap = 20
+    header_height = 100
+    padding = 30
+    img_height = header_height + (len(subsidies) * (card_height + card_gap)) + padding
 
     # 연한 회색 배경 캔버스 생성
     image = Image.new("RGB", (img_width, img_height), color="#F8FAFC")
     draw = ImageDraw.Draw(image)
 
-    # 폰트 불러오기 (나눔고딕 자동 적용으로 한글 깨짐 원천 방지)
-    title_font = get_korean_font(21, is_bold=True)
-    card_title_font = get_korean_font(16, is_bold=True)
-    text_font = get_korean_font(14, is_bold=False)
-    bold_font = get_korean_font(15, is_bold=True)
+    # 대형 폰트 불러오기 (나눔고딕 적용)
+    header_font = get_korean_font(23, is_bold=True)
+    card_title_font = get_korean_font(19, is_bold=True)
+    target_font = get_korean_font(15, is_bold=False)
+    amount_font = get_korean_font(17, is_bold=True)
+    deadline_font = get_korean_font(15, is_bold=True)
 
-    # 상단 헤더 박스 생성 (어두운 블루계열)
-    draw.rectangle([(0, 0), (img_width, header_height - 10)], fill="#1E293B")
+    # 상단 헤더 박스 생성 (어두운 네이비 블루)
+    draw.rectangle([(0, 0), (img_width, header_height - 15)], fill="#0F172A")
     region_name = data.get("region_name", "전국")
-    draw.text((30, 25), f"🔔 [{region_name}] 핵심 청년 지원금 한눈에 보기", fill="#FFFFFF", font=title_font)
+    draw.text((35, 28), f"💡 [{region_name}] 핵심 청년 지원금 3초 요약 비교", fill="#FFFFFF", font=header_font)
 
     # 지원금 항목별 카드 렌더링
     y_offset = header_height
     for idx, item in enumerate(subsidies, 1):
         # 흰색 라운드 카드
         draw.rectangle(
-            [(20, y_offset), (img_width - 20, y_offset + card_height - 15)],
+            [(30, y_offset), (img_width - 30, y_offset + card_height)],
             fill="#FFFFFF",
-            outline="#E2E8F0",
+            outline="#CBD5E1",
             width=2
         )
 
+        # 1행: 지원금 제목 (크고 진하게)
         title_text = f"{idx}. {item.get('title', '청년 지원금')}"
+        draw.text((50, y_offset + 18), title_text, fill="#0F172A", font=card_title_font)
+
+        # 2행: 대상 안내 (자세한 조건, 너무 긴 경우 말줄임)
         target_text = f"• 대상: {item.get('target', '청년')}"
+        if len(target_text) > 52:
+            target_text = target_text[:50] + "..."
+        draw.text((50, y_offset + 55), target_text, fill="#475569", font=target_font)
+
+        # 3행: 핵심 혜택 (파란색 시원한 강조)
         amount_text = f"• 혜택: {item.get('amount', '지자체 공고 참조')}"
+        if len(amount_text) > 50:
+            amount_text = amount_text[:48] + "..."
+        draw.text((50, y_offset + 88), amount_text, fill="#1D4ED8", font=amount_font)
+
+        # 4행: 마감 기한 (독립 행 배치로 absolute 겹침 완벽 차단)
         deadline_text = f"• 마감: {item.get('deadline', '상시/지정기간')}"
+        draw.text((50, y_offset + 122), deadline_text, fill="#DC2626", font=deadline_font)
 
-        draw.text((40, y_offset + 12), title_text, fill="#0F172A", font=card_title_font)
-        draw.text((40, y_offset + 40), target_text, fill="#475569", font=text_font)
-        draw.text((40, y_offset + 65), amount_text, fill="#2563EB", font=bold_font) # 혜택 강조 색상
-        draw.text((520, y_offset + 65), deadline_text, fill="#DC2626", font=bold_font) # 마감 강조 색상
-
-        y_offset += card_height
+        y_offset += card_height + card_gap
 
     # 폴더가 없으면 생성 후 저장
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
