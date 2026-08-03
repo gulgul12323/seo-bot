@@ -20,11 +20,10 @@ def is_subsidy_valid(subsidy):
     if current_month >= 7:
         past_keywords = ["상반기", "1분기", "2분기", "매년 초", "1월", "2월", "3월", "4월", "5월", "6월"]
         if any(k in deadline for k in past_keywords):
-            # '하반기'나 '상시' 문구가 같이 적혀있지 않다면 마감된 것으로 간주
             if not any(k in deadline for k in ["하반기", "상시", "연중", "소진", "9월", "11월"]):
                 return False
 
-    # 2. end_date(마감일자 YYYY-MM-DD)가 명시되어 있는 경우 날짜 직접 비교
+    # 2. end_date(마감일자 YYYY-MM-DD) 명시 시 날짜 직접 비교
     if end_date and any(char.isdigit() for char in end_date):
         if not any(k in end_date for k in ["상시", "연중", "소진", "매월", "분기"]):
             try:
@@ -33,7 +32,7 @@ def is_subsidy_valid(subsidy):
             except Exception:
                 pass
 
-    # 3. deadline 텍스트에 마감/종료 표기가 있는지 검증
+    # 3. deadline 마감 표기 검증
     if any(k in deadline for k in ["접수 마감", "모집 종료", "선발 완료"]):
         if "소진 시" not in deadline and "상시" not in deadline:
             return False
@@ -42,37 +41,41 @@ def is_subsidy_valid(subsidy):
 
 def fetch_from_youth_center_api():
     """
-    온통청년(청년센터) 오픈 API를 호출하여 실시간 공모/접수 중인 전국 청년 정책을 수집합니다.
+    온통청년(청년센터) 오픈 API를 호출하여 실시간 청년 정책 데이터를 수집합니다.
     """
     api_key = os.environ.get("YOUTH_CENTER_API_KEY", "").strip()
     if not api_key:
-        print("💡 YOUTH_CENTER_API_KEY 가 설정되지 않았습니다. 내장 기본 DB를 사용합니다.")
+        print("⚠️ [API 필독] YOUTH_CENTER_API_KEY 가 깃허브 Secrets에 설정되지 않았습니다.")
         return None
 
-    # 온통청년 청년정책 목록 오픈 API URL (최신 50개 조회)
     url = f"https://www.youthcenter.go.kr/opi/empSprtList.do?openApiVkey={api_key}&pageIndex=1&display=50"
 
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
         with urllib.request.urlopen(req, timeout=10) as response:
             xml_data = response.read().decode('utf-8')
+
+        # API 에러 응답 분기 처리
+        if "<resultCode>" in xml_data or "<errMsg>" in xml_data or "openApiVkey" in xml_data and "ERROR" in xml_data:
+            print(f"⚠️ [API 에러] 온통청년 API키가 승인 대기 중이거나 유효하지 않습니다: {xml_data[:200]}")
+            return None
 
         root = ET.fromstring(xml_data)
         emp_list = root.findall('.//emp')
 
         if not emp_list:
-            print("⚠️ 온통청년 API 응답 데이터가 비어 있습니다.")
+            print(f"⚠️ [API 경고] 온통청년 API 응답 데이터(emp)가 0개입니다. 응답 내용: {xml_data[:200]}")
             return None
 
         subsidies = []
         for emp in emp_list:
-            title = emp.findtext('polyBizSjnm', '').strip()          # 정책명
-            summary = emp.findtext('polyItcnCn', '').strip()          # 정책소개
-            target = emp.findtext('ageInfo', '만 19세~39세 청년').strip() # 연령 조건
-            amount = emp.findtext('sporCn', '지자체 공고문 참조').strip() # 지원내용
-            deadline = emp.findtext('rqutPrdCn', '상시/지정기간').strip() # 신청기간
-            apply_path = emp.findtext('rqutUrla', '').strip()        # 신청 URL
-            cnd_info = emp.findtext('cndPrdCn', '').strip()          # 신청자격
+            title = emp.findtext('polyBizSjnm', '').strip()
+            summary = emp.findtext('polyItcnCn', '').strip()
+            target = emp.findtext('ageInfo', '만 19세~39세 청년').strip()
+            amount = emp.findtext('sporCn', '지자체 공고 참조').strip()
+            deadline = emp.findtext('rqutPrdCn', '상시/지정기간').strip()
+            apply_path = emp.findtext('rqutUrla', '').strip()
+            cnd_info = emp.findtext('cndPrdCn', '').strip()
 
             if not apply_path:
                 apply_path = emp.findtext('rfcSiteUrla1', '온통청년 포털 및 지자체 홈페이지').strip()
@@ -105,17 +108,17 @@ def fetch_from_youth_center_api():
             if is_subsidy_valid(item):
                 subsidies.append(item)
 
-        print(f"✅ 온통청년 API 데이터 수집 및 검증 완료: 총 {len(subsidies)}개 추출됨.")
+        print(f"✅ [API 성공] 온통청년 API 수집 완료: 총 {len(subsidies)}개 최신 정책 수집됨.")
         return subsidies
 
     except Exception as e:
-        print(f"⚠️ 온통청년 API 호출 예외 발생: {e}")
+        print(f"⚠️ [API 예외] 온통청년 API 통신 중 오류 발생: {e}")
         return None
 
 def get_subsidy_data():
     """
-    온통청년 API 실시간 데이터 우선 사용 ➔ 실패 시 내장 DB 사용
-    중복 발행을 방지하고 유효한 지원금만 골라 포스팅 데이터로 전달합니다.
+    과거 발행된 모든 포스팅 본문을 100% 검사하여 중복을 차단하고,
+    온통청년 API 데이터를 우선 활용하여 추출합니다.
     """
     data_pool = [
         # [부산광역시]
@@ -182,12 +185,12 @@ def get_subsidy_data():
                     "deadline": "연중 상시 접수",
                     "end_date": "상시",
                     "apply_path": "대전 청년포털 '청년틈새' 온라인 신청",
-                    "secret_tip": "대전 시내 대학가(충남대, 한남대 등) 주변 자취방 구할 때 은행 대출이자 부담을 거의 0원으로 만듦."
+                    "secret_tip": "대전 시내 대학가 주변 자취방 구할 때 은행 대출이자 부담을 거의 0원으로 만듦."
                 }
             ]
         },
 
-        # [전국 공통 - 압도적 혜택 금액]
+        # [전국 공통]
         {
             "scope_type": "national",
             "region_name": "전국 공통",
@@ -198,33 +201,30 @@ def get_subsidy_data():
                     "amount": "5년 만기 시 최대 5,000만 원 목돈 마련 (정부지원금+비과세)",
                     "deadline": "매월 초 가입 신청 기간",
                     "end_date": "상시",
-                    "apply_path": "주요 은행(KB, 신한, 우리, 하나 등) 모바일 앱",
-                    "secret_tip": "육아휴직자, 육아수당 수령자도 가입 가능하며, 육아/병역 이행 기간은 나이 산정 시 차감해 줌."
+                    "apply_path": "주요 은행 모바일 앱",
+                    "secret_tip": "육아휴직자, 육아수당 수령자도 가입 가능하며 나이 산정 시 군복무 기간 차감."
                 },
                 {
                     "title": "2026 K-Digital Training (KDT) IT/AI 교육비 전액 지원",
                     "target": "구직자(대학생, 취준생, 이직희망자)",
-                    "amount": "수강료 100% 전액 국비지원 (수백만 원 상당) + 월 최대 31만 6천 원 훈련수당 지급",
+                    "amount": "수강료 100% 전액 국비지원 + 월 최대 31만 6천 원 훈련수당 지급",
                     "deadline": "상시 과정 개설",
                     "end_date": "상시",
-                    "apply_path": "HRD-Flex 및 고용24 홈페이지 (내일배움카드 발급 필수)",
-                    "secret_tip": "전공 상관없이 문과생도 신청 가능. 출석률 80%만 유지하면 수당이 통장으로 들어옴."
+                    "apply_path": "HRD-Flex 및 고용24 홈페이지",
+                    "secret_tip": "전공 상관없이 문과생도 신청 가능하며 출석률 80% 이상 시 수당 지급."
                 }
             ]
         }
     ]
 
-    # 1. 이전 작성된 포스팅(posts.json 및 posts/ 폴더) 제목 수집
-    posted_titles = set()
+    # 1. 과거 작성된 모든 게시글의 전체 텍스트 수집 (중복 검사용)
+    all_past_text = ""
     if os.path.exists("posts.json"):
         try:
             with open("posts.json", "r", encoding="utf-8") as f:
                 posts_data = json.load(f)
                 for post in posts_data:
-                    content = post.get("content", "")
-                    for line in content.split("\n"):
-                        if line.startswith("# "):
-                            posted_titles.add(line.replace("# ", "").strip())
+                    all_past_text += post.get("content", "") + "\n"
         except Exception as e:
             print(f"⚠️ posts.json 읽기 오류: {e}")
 
@@ -234,32 +234,37 @@ def get_subsidy_data():
                 if fname.endswith(".md"):
                     fpath = os.path.join("posts", fname)
                     with open(fpath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        for line in content.split("\n"):
-                            if line.startswith("# "):
-                                posted_titles.add(line.replace("# ", "").strip())
+                        all_past_text += f.read() + "\n"
         except Exception as e:
             print(f"⚠️ posts 폴더 스캔 오류: {e}")
 
-    # 2. [우선순위 1] 온통청년 API 호출
+    # 2. [우선순위 1] 온통청년 API 호출 시도
     api_subsidies = fetch_from_youth_center_api()
     if api_subsidies:
-        unposted_api = [s for s in api_subsidies if s["title"] not in posted_titles]
-        candidate_pool = unposted_api if unposted_api else api_subsidies
+        # 과거 포스팅 본문에 제목이 없는 신규 지원금 선별
+        unposted_api = [s for s in api_subsidies if s["title"] not in all_past_text]
         
-        # 블로그 포스팅 1개당 2~3개의 지원금 정보 묶음 제공
-        selected_count = min(3, len(candidate_pool))
-        selected_subsidies = random.sample(candidate_pool, selected_count)
-        
-        print(f"✨ [온통청년 API] 실시간 최신 지원금 {selected_count}개를 선택했습니다.")
-        return {
-            "scope_type": "national",
-            "region_name": "전국/지자체",
-            "subsidies": selected_subsidies
-        }
+        if unposted_api:
+            selected_count = min(3, len(unposted_api))
+            selected_subsidies = random.sample(unposted_api, selected_count)
+            print(f"✨ [온통청년 API] 미발행 신규 지원금 {selected_count}개를 정상 선택했습니다!")
+            return {
+                "scope_type": "national",
+                "region_name": "전국/지자체",
+                "subsidies": selected_subsidies
+            }
+        else:
+            selected_count = min(3, len(api_subsidies))
+            selected_subsidies = random.sample(api_subsidies, selected_count)
+            print("🔄 [온통청년 API] 수집된 모든 지원금이 작성되어 재순환 선택했습니다.")
+            return {
+                "scope_type": "national",
+                "region_name": "전국/지자체",
+                "subsidies": selected_subsidies
+            }
 
-    # 3. [우선순위 2] API 미발동 시 내장 DB (data_pool) 사용
-    print("💡 API 미연동/실패로 내장 비상 DB에서 선택합니다.")
+    # 3. [우선순위 2] API 실패 시 내장 DB (data_pool) 사용
+    print("💡 온통청년 API 미발동으로 내장 DB에서 선택합니다.")
     valid_data_pool = []
     for group in data_pool:
         valid_subsidies = [s for s in group["subsidies"] if is_subsidy_valid(s)]
@@ -270,7 +275,8 @@ def get_subsidy_data():
 
     unposted_data_pool = []
     for group in valid_data_pool:
-        unposted_subsidies = [s for s in group["subsidies"] if s["title"] not in posted_titles]
+        # 본문 전체 텍스트에 제목이 없는 지원금 그룹만 추출
+        unposted_subsidies = [s for s in group["subsidies"] if s["title"] not in all_past_text]
         if unposted_subsidies:
             group_copy = group.copy()
             group_copy["subsidies"] = unposted_subsidies
@@ -278,7 +284,7 @@ def get_subsidy_data():
 
     if unposted_data_pool:
         selected_data = random.choice(unposted_data_pool)
-        print("✨ [내장 DB] 아직 작성하지 않은 지원금을 선택했습니다.")
+        print("✨ [내장 DB] 아직 작성하지 않은 새로운 지원금을 선택했습니다.")
     elif valid_data_pool:
         selected_data = random.choice(valid_data_pool)
         print("🔄 [내장 DB] 모든 지원금이 작성되어 재순환 선택했습니다.")
@@ -287,7 +293,7 @@ def get_subsidy_data():
 
     return selected_data
 
-# 모듈 호출 호환성을 위한 별칭 설정
+# 별칭 설정
 fetch_subsidy_data = get_subsidy_data
 
 if __name__ == "__main__":
