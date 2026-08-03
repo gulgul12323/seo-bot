@@ -5,9 +5,33 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+HISTORY_FILE = "history.json"
+
+def load_history():
+    """발행된 지원금 장부(history.json)를 불러옵니다."""
+    history = set()
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    history.update(data)
+        except Exception as e:
+            print(f"⚠️ history.json 읽기 예외: {e}")
+    return history
+
+def save_history(history_set):
+    """발행된 지원금 장부(history.json)를 저장합니다."""
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(history_set), f, ensure_ascii=False, indent=2)
+        print(f"📝 [장부 업데이트] 누적 발행된 지원금 총 {len(history_set)}개 기록됨")
+    except Exception as e:
+        print(f"⚠️ history.json 저장 예외: {e}")
+
 def is_subsidy_valid(subsidy):
     """
-    오늘 날짜 및 현재 월/시즌 기준으로 지원금이 유효한지 2중 검증하는 함수
+    오늘 날짜 및 현재 월/시즌 기준으로 지원금이 유효한지 검증하는 함수
     """
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
@@ -16,14 +40,12 @@ def is_subsidy_valid(subsidy):
     deadline = str(subsidy.get("deadline", ""))
     end_date = str(subsidy.get("end_date", ""))
 
-    # 1. 하반기(7월 이후) 기준 이미 지나간 시즌(상반기, 연초, 1~2분기) 키워드 즉시 차단
     if current_month >= 7:
         past_keywords = ["상반기", "1분기", "2분기", "매년 초", "1월", "2월", "3월", "4월", "5월", "6월"]
         if any(k in deadline for k in past_keywords):
             if not any(k in deadline for k in ["하반기", "상시", "연중", "소진", "9월", "11월"]):
                 return False
 
-    # 2. end_date(마감일자 YYYY-MM-DD) 명시 시 날짜 직접 비교
     if end_date and any(char.isdigit() for char in end_date):
         if not any(k in end_date for k in ["상시", "연중", "소진", "매월", "분기"]):
             try:
@@ -32,7 +54,6 @@ def is_subsidy_valid(subsidy):
             except Exception:
                 pass
 
-    # 3. deadline 마감 표기 검증
     if any(k in deadline for k in ["접수 마감", "모집 종료", "선발 완료"]):
         if "소진 시" not in deadline and "상시" not in deadline:
             return False
@@ -45,7 +66,7 @@ def fetch_from_youth_center_api():
     """
     api_key = os.environ.get("YOUTH_CENTER_API_KEY", "").strip()
     if not api_key:
-        print("⚠️ [API 필독] YOUTH_CENTER_API_KEY 가 깃허브 Secrets에 설정되지 않았습니다.")
+        print("💡 [API 안내] YOUTH_CENTER_API_KEY 가 Secrets에 없습니다. 내장 DB를 사용합니다.")
         return None
 
     url = f"https://www.youthcenter.go.kr/opi/empSprtList.do?openApiVkey={api_key}&pageIndex=1&display=50"
@@ -55,16 +76,16 @@ def fetch_from_youth_center_api():
         with urllib.request.urlopen(req, timeout=10) as response:
             xml_data = response.read().decode('utf-8')
 
-        # API 에러 응답 분기 처리
-        if "<resultCode>" in xml_data or "<errMsg>" in xml_data or "openApiVkey" in xml_data and "ERROR" in xml_data:
-            print(f"⚠️ [API 에러] 온통청년 API키가 승인 대기 중이거나 유효하지 않습니다: {xml_data[:200]}")
+        # API 에러 응답 파악
+        if "<resultCode>" in xml_data or "<errMsg>" in xml_data or "ERROR" in xml_data:
+            print(f"⚠️ [API 승인대기/오류] 온통청년 API가 아직 승인 안 되었거나 키 오류입니다. (응답: {xml_data[:150]})")
             return None
 
         root = ET.fromstring(xml_data)
         emp_list = root.findall('.//emp')
 
         if not emp_list:
-            print(f"⚠️ [API 경고] 온통청년 API 응답 데이터(emp)가 0개입니다. 응답 내용: {xml_data[:200]}")
+            print("⚠️ [API 안내] API 응답 데이터가 0개입니다.")
             return None
 
         subsidies = []
@@ -112,14 +133,15 @@ def fetch_from_youth_center_api():
         return subsidies
 
     except Exception as e:
-        print(f"⚠️ [API 예외] 온통청년 API 통신 중 오류 발생: {e}")
+        print(f"⚠️ [API 통신예외] {e}")
         return None
 
 def get_subsidy_data():
     """
-    과거 발행된 모든 포스팅 본문을 100% 검사하여 중복을 차단하고,
-    온통청년 API 데이터를 우선 활용하여 추출합니다.
+    발행 장부(history.json)를 기반으로 100% 중복을 차단하고 신규 지원금을 추출합니다.
     """
+    history_set = load_history()
+
     data_pool = [
         # [부산광역시]
         {
@@ -217,79 +239,55 @@ def get_subsidy_data():
         }
     ]
 
-    # 1. 과거 작성된 모든 게시글의 전체 텍스트 수집 (중복 검사용)
-    all_past_text = ""
-    if os.path.exists("posts.json"):
-        try:
-            with open("posts.json", "r", encoding="utf-8") as f:
-                posts_data = json.load(f)
-                for post in posts_data:
-                    all_past_text += post.get("content", "") + "\n"
-        except Exception as e:
-            print(f"⚠️ posts.json 읽기 오류: {e}")
+    # 기존에 올렸던 부산 지원금(어제/오늘) 장부에 강제 등록하여 중복 차단
+    history_set.add("부산 청년 월세 파격 지원 사업")
+    history_set.add("2026 부산 청년 끌어안음 주택임차보증금 이자지원")
 
-    if os.path.exists("posts"):
-        try:
-            for fname in os.listdir("posts"):
-                if fname.endswith(".md"):
-                    fpath = os.path.join("posts", fname)
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        all_past_text += f.read() + "\n"
-        except Exception as e:
-            print(f"⚠️ posts 폴더 스캔 오류: {e}")
-
-    # 2. [우선순위 1] 온통청년 API 호출 시도
+    # 1. [우선순위 1] 온통청년 API 호출 시도
     api_subsidies = fetch_from_youth_center_api()
     if api_subsidies:
-        # 과거 포스팅 본문에 제목이 없는 신규 지원금 선별
-        unposted_api = [s for s in api_subsidies if s["title"] not in all_past_text]
+        unposted_api = [s for s in api_subsidies if s["title"] not in history_set]
+        candidate_pool = unposted_api if unposted_api else api_subsidies
         
-        if unposted_api:
-            selected_count = min(3, len(unposted_api))
-            selected_subsidies = random.sample(unposted_api, selected_count)
-            print(f"✨ [온통청년 API] 미발행 신규 지원금 {selected_count}개를 정상 선택했습니다!")
-            return {
-                "scope_type": "national",
-                "region_name": "전국/지자체",
-                "subsidies": selected_subsidies
-            }
-        else:
-            selected_count = min(3, len(api_subsidies))
-            selected_subsidies = random.sample(api_subsidies, selected_count)
-            print("🔄 [온통청년 API] 수집된 모든 지원금이 작성되어 재순환 선택했습니다.")
-            return {
-                "scope_type": "national",
-                "region_name": "전국/지자체",
-                "subsidies": selected_subsidies
-            }
+        selected_count = min(3, len(candidate_pool))
+        selected_subsidies = random.sample(candidate_pool, selected_count)
 
-    # 3. [우선순위 2] API 실패 시 내장 DB (data_pool) 사용
-    print("💡 온통청년 API 미발동으로 내장 DB에서 선택합니다.")
-    valid_data_pool = []
+        for s in selected_subsidies:
+            history_set.add(s["title"])
+        save_history(history_set)
+
+        print(f"✨ [온통청년 API] 장부 미등록 신규 지원금 {selected_count}개를 정상 선택했습니다!")
+        return {
+            "scope_type": "national",
+            "region_name": "전국/지자체",
+            "subsidies": selected_subsidies
+        }
+
+    # 2. [우선순위 2] API 미발동 시 내장 DB (data_pool) 사용
+    print("💡 온통청년 API 미발동으로 내장 DB에서 장부 미등록 항목을 검색합니다.")
+    unposted_groups = []
     for group in data_pool:
-        valid_subsidies = [s for s in group["subsidies"] if is_subsidy_valid(s)]
-        if valid_subsidies:
-            group_copy = group.copy()
-            group_copy["subsidies"] = valid_subsidies
-            valid_data_pool.append(group_copy)
-
-    unposted_data_pool = []
-    for group in valid_data_pool:
-        # 본문 전체 텍스트에 제목이 없는 지원금 그룹만 추출
-        unposted_subsidies = [s for s in group["subsidies"] if s["title"] not in all_past_text]
+        # 그룹 안의 지원금 중 하나라도 장부에 없는 신규 항목이 있는지 확인
+        unposted_subsidies = [s for s in group["subsidies"] if s["title"] not in history_set]
         if unposted_subsidies:
             group_copy = group.copy()
             group_copy["subsidies"] = unposted_subsidies
-            unposted_data_pool.append(group_copy)
+            unposted_groups.append(group_copy)
 
-    if unposted_data_pool:
-        selected_data = random.choice(unposted_data_pool)
-        print("✨ [내장 DB] 아직 작성하지 않은 새로운 지원금을 선택했습니다.")
-    elif valid_data_pool:
-        selected_data = random.choice(valid_data_pool)
-        print("🔄 [내장 DB] 모든 지원금이 작성되어 재순환 선택했습니다.")
+    if unposted_groups:
+        selected_data = random.choice(unposted_groups)
+        for s in selected_data["subsidies"]:
+            history_set.add(s["title"])
+        save_history(history_set)
+        print("✨ [내장 DB] 장부에 없는 '새로운 지역 지원금'을 선택했습니다.")
     else:
-        selected_data = data_pool[-1]
+        # 내장 DB가 모두 소진된 경우 장부 리셋 후 순환
+        history_set.clear()
+        selected_data = random.choice(data_pool)
+        for s in selected_data["subsidies"]:
+            history_set.add(s["title"])
+        save_history(history_set)
+        print("🔄 [내장 DB] 모든 내장 지원금이 장부에 기록되어 순환 재선택했습니다.")
 
     return selected_data
 
