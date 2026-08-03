@@ -1,6 +1,8 @@
+import os
 import json
 import random
-import os
+import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 def is_subsidy_valid(subsidy):
@@ -38,10 +40,82 @@ def is_subsidy_valid(subsidy):
 
     return True
 
+def fetch_from_youth_center_api():
+    """
+    온통청년(청년센터) 오픈 API를 호출하여 실시간 공모/접수 중인 전국 청년 정책을 수집합니다.
+    """
+    api_key = os.environ.get("YOUTH_CENTER_API_KEY", "").strip()
+    if not api_key:
+        print("💡 YOUTH_CENTER_API_KEY 가 설정되지 않았습니다. 내장 기본 DB를 사용합니다.")
+        return None
+
+    # 온통청년 청년정책 목록 오픈 API URL (최신 50개 조회)
+    url = f"https://www.youthcenter.go.kr/opi/empSprtList.do?openApiVkey={api_key}&pageIndex=1&display=50"
+
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read().decode('utf-8')
+
+        root = ET.fromstring(xml_data)
+        emp_list = root.findall('.//emp')
+
+        if not emp_list:
+            print("⚠️ 온통청년 API 응답 데이터가 비어 있습니다.")
+            return None
+
+        subsidies = []
+        for emp in emp_list:
+            title = emp.findtext('polyBizSjnm', '').strip()          # 정책명
+            summary = emp.findtext('polyItcnCn', '').strip()          # 정책소개
+            target = emp.findtext('ageInfo', '만 19세~39세 청년').strip() # 연령 조건
+            amount = emp.findtext('sporCn', '지자체 공고문 참조').strip() # 지원내용
+            deadline = emp.findtext('rqutPrdCn', '상시/지정기간').strip() # 신청기간
+            apply_path = emp.findtext('rqutUrla', '').strip()        # 신청 URL
+            cnd_info = emp.findtext('cndPrdCn', '').strip()          # 신청자격
+
+            if not apply_path:
+                apply_path = emp.findtext('rfcSiteUrla1', '온통청년 포털 및 지자체 홈페이지').strip()
+
+            if not title:
+                continue
+
+            clean_amount = amount.replace('\n', ' ') if amount else "지자체 공고문 참조"
+            if len(clean_amount) > 80:
+                clean_amount = clean_amount[:78] + "..."
+
+            clean_target = target.replace('\n', ' ') if target else "청년 가구 및 구직자"
+            if len(clean_target) > 80:
+                clean_target = clean_target[:78] + "..."
+
+            secret_tip = cnd_info if cnd_info else summary
+            if len(secret_tip) > 100:
+                secret_tip = secret_tip[:98] + "..."
+
+            item = {
+                "title": title,
+                "target": clean_target,
+                "amount": clean_amount,
+                "deadline": deadline if deadline else "상시 접수",
+                "end_date": "상시",
+                "apply_path": apply_path if apply_path else "온통청년 포털 온라인 접수",
+                "secret_tip": secret_tip if secret_tip else "자세한 자격조건은 공식 공고문 확인 필수."
+            }
+
+            if is_subsidy_valid(item):
+                subsidies.append(item)
+
+        print(f"✅ 온통청년 API 데이터 수집 및 검증 완료: 총 {len(subsidies)}개 추출됨.")
+        return subsidies
+
+    except Exception as e:
+        print(f"⚠️ 온통청년 API 호출 예외 발생: {e}")
+        return None
+
 def get_subsidy_data():
     """
-    전국 광역/기초 지자체 및 중앙부처의 고가치(High-Value) 청년 지원금 DB
-    이전 발행된 포스팅을 검사하여 '중복되지 않은 새로운 지원금'만 선별 추출합니다.
+    온통청년 API 실시간 데이터 우선 사용 ➔ 실패 시 내장 DB 사용
+    중복 발행을 방지하고 유효한 지원금만 골라 포스팅 데이터로 전달합니다.
     """
     data_pool = [
         # [부산광역시]
@@ -140,7 +214,7 @@ def get_subsidy_data():
         }
     ]
 
-    # 1. 이미 작성된 포스팅(posts.json 및 posts/ 폴더) 스캔하여 사용된 지원금 제목 수집
+    # 1. 이전 작성된 포스팅(posts.json 및 posts/ 폴더) 제목 수집
     posted_titles = set()
     if os.path.exists("posts.json"):
         try:
@@ -148,10 +222,9 @@ def get_subsidy_data():
                 posts_data = json.load(f)
                 for post in posts_data:
                     content = post.get("content", "")
-                    for group in data_pool:
-                        for sub in group["subsidies"]:
-                            if sub["title"] in content:
-                                posted_titles.add(sub["title"])
+                    for line in content.split("\n"):
+                        if line.startswith("# "):
+                            posted_titles.add(line.replace("# ", "").strip())
         except Exception as e:
             print(f"⚠️ posts.json 읽기 오류: {e}")
 
@@ -162,14 +235,31 @@ def get_subsidy_data():
                     fpath = os.path.join("posts", fname)
                     with open(fpath, "r", encoding="utf-8") as f:
                         content = f.read()
-                        for group in data_pool:
-                            for sub in group["subsidies"]:
-                                if sub["title"] in content:
-                                    posted_titles.add(sub["title"])
+                        for line in content.split("\n"):
+                            if line.startswith("# "):
+                                posted_titles.add(line.replace("# ", "").strip())
         except Exception as e:
             print(f"⚠️ posts 폴더 스캔 오류: {e}")
 
-    # 2. 오늘 시점 유효한 지원금만 1차 필터링
+    # 2. [우선순위 1] 온통청년 API 호출
+    api_subsidies = fetch_from_youth_center_api()
+    if api_subsidies:
+        unposted_api = [s for s in api_subsidies if s["title"] not in posted_titles]
+        candidate_pool = unposted_api if unposted_api else api_subsidies
+        
+        # 블로그 포스팅 1개당 2~3개의 지원금 정보 묶음 제공
+        selected_count = min(3, len(candidate_pool))
+        selected_subsidies = random.sample(candidate_pool, selected_count)
+        
+        print(f"✨ [온통청년 API] 실시간 최신 지원금 {selected_count}개를 선택했습니다.")
+        return {
+            "scope_type": "national",
+            "region_name": "전국/지자체",
+            "subsidies": selected_subsidies
+        }
+
+    # 3. [우선순위 2] API 미발동 시 내장 DB (data_pool) 사용
+    print("💡 API 미연동/실패로 내장 비상 DB에서 선택합니다.")
     valid_data_pool = []
     for group in data_pool:
         valid_subsidies = [s for s in group["subsidies"] if is_subsidy_valid(s)]
@@ -178,7 +268,6 @@ def get_subsidy_data():
             group_copy["subsidies"] = valid_subsidies
             valid_data_pool.append(group_copy)
 
-    # 3. 작성된 적 없는 '신규 지원금'만 2차 필터링
     unposted_data_pool = []
     for group in valid_data_pool:
         unposted_subsidies = [s for s in group["subsidies"] if s["title"] not in posted_titles]
@@ -187,13 +276,12 @@ def get_subsidy_data():
             group_copy["subsidies"] = unposted_subsidies
             unposted_data_pool.append(group_copy)
 
-    # 4. 신규 지원금이 남아있으면 우선 추출, 모두 작성되었으면 전체 중 순환 선택
     if unposted_data_pool:
         selected_data = random.choice(unposted_data_pool)
-        print("✨ [신규] 아직 블로그에 올리지 않은 새로운 지원금을 선택했습니다.")
+        print("✨ [내장 DB] 아직 작성하지 않은 지원금을 선택했습니다.")
     elif valid_data_pool:
         selected_data = random.choice(valid_data_pool)
-        print("🔄 [순환] 모든 지원금이 작성 완료되어 재순환 선택했습니다.")
+        print("🔄 [내장 DB] 모든 지원금이 작성되어 재순환 선택했습니다.")
     else:
         selected_data = data_pool[-1]
 
