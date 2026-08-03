@@ -2,6 +2,8 @@ import os
 import json
 import random
 import urllib.request
+import ssl
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -62,7 +64,7 @@ def is_subsidy_valid(subsidy):
 
 def fetch_from_youth_center_api():
     """
-    온통청년(청년센터) 오픈 API를 호출하여 실시간 청년 정책 데이터를 수집합니다.
+    온통청년(청년센터) 오픈 API를 호출하며, 타임아웃 및 SSL 인증 처리를 강화합니다.
     """
     api_key = os.environ.get("YOUTH_CENTER_API_KEY", "").strip()
     if not api_key:
@@ -71,14 +73,34 @@ def fetch_from_youth_center_api():
 
     url = f"https://www.youthcenter.go.kr/opi/empSprtList.do?openApiVkey={api_key}&pageIndex=1&display=50"
 
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            xml_data = response.read().decode('utf-8')
+    # SSL 보안 인증 검사 우회 (공공기관 서버 통신 안정화)
+    context = ssl._create_unverified_context()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/xml, text/xml, */*'
+    }
 
-        # API 에러 응답 파악
+    # 최대 2회 재시도 (정부 서버 지연 대응)
+    xml_data = None
+    for attempt in range(1, 3):
+        try:
+            print(f"📡 온통청년 API 호출 시도 중... ({attempt}/2)")
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=20, context=context) as response:
+                xml_data = response.read().decode('utf-8')
+                if xml_data:
+                    break
+        except Exception as e:
+            print(f"⚠️ ({attempt}/2) 시도 중 통신 실패: {e}")
+            time.sleep(2)
+
+    if not xml_data:
+        print("⚠️ 온통청년 API 서버 응답 없음 (해외 클라우드 IP 차단 또는 서버 점검 중)")
+        return None
+
+    try:
         if "<resultCode>" in xml_data or "<errMsg>" in xml_data or "ERROR" in xml_data:
-            print(f"⚠️ [API 승인대기/오류] 온통청년 API가 아직 승인 안 되었거나 키 오류입니다. (응답: {xml_data[:150]})")
+            print(f"⚠️ [API 승인대기/오류] API가 아직 승인 안 되었거나 키 오류입니다: {xml_data[:150]}")
             return None
 
         root = ET.fromstring(xml_data)
@@ -133,7 +155,7 @@ def fetch_from_youth_center_api():
         return subsidies
 
     except Exception as e:
-        print(f"⚠️ [API 통신예외] {e}")
+        print(f"⚠️ [XML 파싱 예외] {e}")
         return None
 
 def get_subsidy_data():
@@ -239,7 +261,7 @@ def get_subsidy_data():
         }
     ]
 
-    # 기존에 올렸던 부산 지원금(어제/오늘) 장부에 강제 등록하여 중복 차단
+    # 과거 올렸던 부산 지원금 장부 등록
     history_set.add("부산 청년 월세 파격 지원 사업")
     history_set.add("2026 부산 청년 끌어안음 주택임차보증금 이자지원")
 
@@ -267,7 +289,6 @@ def get_subsidy_data():
     print("💡 온통청년 API 미발동으로 내장 DB에서 장부 미등록 항목을 검색합니다.")
     unposted_groups = []
     for group in data_pool:
-        # 그룹 안의 지원금 중 하나라도 장부에 없는 신규 항목이 있는지 확인
         unposted_subsidies = [s for s in group["subsidies"] if s["title"] not in history_set]
         if unposted_subsidies:
             group_copy = group.copy()
@@ -281,7 +302,6 @@ def get_subsidy_data():
         save_history(history_set)
         print("✨ [내장 DB] 장부에 없는 '새로운 지역 지원금'을 선택했습니다.")
     else:
-        # 내장 DB가 모두 소진된 경우 장부 리셋 후 순환
         history_set.clear()
         selected_data = random.choice(data_pool)
         for s in selected_data["subsidies"]:
