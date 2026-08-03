@@ -28,6 +28,7 @@ jobs:
       - name: AI 포스팅 자동 생성 실행
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YOUTH_CENTER_API_KEY: ${{ secrets.YOUTH_CENTER_API_KEY }} # 👈 온통청년 API 키 추가
         run: python main.py
 
       - name: 자동 커밋 및 푸시
