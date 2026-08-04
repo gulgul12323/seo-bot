@@ -32,7 +32,7 @@ def get_already_posted_text():
     return posted_text
 
 def extract_monetary_value(text):
-    """텍스트 내 금액 수치(억 원, 만 원, 월 XX만 원)를 파싱하여 금액 가중치 점수를 환산합니다."""
+    """텍스트 내 금액 수치를 파싱하여 가중치 점수를 산출합니다."""
     score = 0
     eok_matches = re.findall(r'(\d+(?:\.\d+)?)\s*억', text)
     for m in eok_matches:
@@ -48,22 +48,35 @@ def extract_monetary_value(text):
 
     return score
 
-def is_valid_policy(title, pub_dt):
-    """기한 만료 및 이미 마감된 소식 제외"""
-    expired_keywords = ["마감", "종료", "선발 완료", "접수 마감", "모집 완료", "완료"]
-    if any(kw in title for kw in expired_keywords):
+def is_valid_policy_news(title, pub_dt):
+    """
+    [강력한 2중 필터]
+    1. 단순 행사/동향/간담회 기사 100% 제거
+    2. 실제 모집/신청/지급 기사만 통과
+    """
+    # 🚫 [무조건 제외] 단순 지자체 행사, 간담회, 협약 기사
+    junk_keywords = [
+        "간담회", "출범", "네트워크", "포럼", "협약", "MOU", "원테이블", 
+        "특강", "토론회", "청년의 날", "체결", "마감", "종료", "선발 완료", "접수 마감"
+    ]
+    if any(kw in title for kw in junk_keywords):
         return False
 
+    # ✅ [필수 포함] 실제 혜택/모집 관련 키워드가 하나라도 있어야 함
+    valid_keywords = ["모집", "신청", "지원", "수당", "선발", "지급", "접수", "달성", "혜택", "통장", "월세"]
+    if not any(kw in title for kw in valid_keywords):
+        return False
+
+    # 날짜 검증 (60일 초과 구형 기사 차단)
     if pub_dt:
         now = datetime.now(timezone.utc)
-        days_diff = (now - pub_dt).days
-        if days_diff > 60:
+        if (now - pub_dt).days > 60:
             return False
 
     return True
 
 def calculate_priority_score(title, pub_dt):
-    """금액 규모(60%) + 최신성(40%) 가중치 계산"""
+    """금액 규모 + 최신성 가중치 계산"""
     money_score = extract_monetary_value(title)
     recency_score = 0
     if pub_dt:
@@ -86,17 +99,18 @@ def fetch_rss_from_url(url):
 
 def fetch_rss_news():
     """
-    1차: 구글 뉴스 RSS
-    2차: 대한민국 정책브리핑 RSS
+    타겟팅된 정밀 키워드로 실시간 RSS를 수집합니다.
     """
+    # 단순 '청년정책'을 빼고 실제 혜택 중심 키워드로 검색
+    search_query = "청년 지원금 OR 청년수당 OR 청년 월세 지원 OR 청년 모집"
     rss_urls = [
-        f"https://news.google.com/rss/search?q={urllib.parse.quote('청년 지원금 OR 청년수당 OR 청년정책')}&hl=ko&gl=KR&ceid=KR:ko",
+        f"https://news.google.com/rss/search?q={urllib.parse.quote(search_query)}&hl=ko&gl=KR&ceid=KR:ko",
         "https://www.korea.kr/rss/policy.xml"
     ]
 
     for url in rss_urls:
         try:
-            print(f"📡 RSS 수집 시도 중: {url[:50]}...")
+            print(f"📡 정밀 타겟팅 RSS 수집 시도 중: {url[:50]}...")
             xml_data = fetch_rss_from_url(url)
             root = ET.fromstring(xml_data)
             items = root.findall('.//item')
@@ -119,31 +133,31 @@ def fetch_rss_news():
                     except Exception:
                         pass
 
-                if not is_valid_policy(clean_title, pub_dt):
+                # ✋ 2중 정밀 필터링 적용 (간담회/출범 기사 싹 걸러냄)
+                if not is_valid_policy_news(clean_title, pub_dt):
                     continue
 
                 p_score = calculate_priority_score(clean_title, pub_dt)
 
                 candidate = {
                     "title": clean_title,
-                    "target": "해당 지자체 및 정부 지원 정책 대상 청년",
-                    "amount": "최신 공식 공고문 및 보도자료 지원 규모 참조",
-                    "deadline": "상시 / 지정 모집 기간 (공식 공고 확인 필수)",
+                    "target": "해당 지자체 및 정부 지원 자격 요건 충족 청년",
+                    "amount": "공식 공고문 참조 (상세 지원 규모 확인)",
+                    "deadline": "공고문 지정 모집 및 접수 기간",
                     "apply_path": link if link else "공식 신청 사이트 및 지자체 포털",
-                    "secret_tip": f"보도 시각: {pub_date_str[:16] if pub_date_str else '최신'} | 공식 보도자료 내용 기반입니다.",
+                    "secret_tip": f"보도 시각: {pub_date_str[:16] if pub_date_str else '최신'} | 공식 공고문 수혜 조건 확인 필수.",
                     "priority_score": p_score
                 }
                 candidates.append(candidate)
 
             if candidates:
-                # 가중치 높음 순으로 정렬
+                # 가중치 순 정렬 후 상위 추출
                 candidates.sort(key=lambda x: x["priority_score"], reverse=True)
                 
-                # JSON 직렬화에 원인을 제공하는 priority_score 키 제거
                 for c in candidates:
                     c.pop("priority_score", None)
 
-                print(f"✅ RSS 수집 성공! ({len(candidates)}개 수집됨)")
+                print(f"✅ 정밀 검증 성공! 실제 지원금 공고 기사만 {len(candidates)}개 선별되었습니다.")
                 return candidates
 
         except Exception as e:
@@ -153,11 +167,11 @@ def fetch_rss_news():
 
 def get_subsidy_data():
     """
-    실시간 RSS ➔ 실패 시 youth_db.json ➔ 중복 엄격 필터링
+    실시간 RSS (정밀 필터) ➔ 실패 시 youth_db.json
     """
     past_text = get_already_posted_text()
 
-    # 1. 실시간 RSS 수집
+    # 1. 정밀 RSS 수집
     news_items = fetch_rss_news()
 
     if news_items:
@@ -166,14 +180,14 @@ def get_subsidy_data():
         if unposted:
             selected_count = min(3, len(unposted))
             selected = unposted[:selected_count]
-            print(f"✨ [우선순위 RSS] 중복 없는 신규 지원금 {selected_count}개 선택 완료!")
+            print(f"✨ [정밀 RSS] 가짜 뉴스 배제된 진짜 지원금 공고 {selected_count}개 선택 완료!")
             return {
                 "scope_type": "national",
-                "region_name": "최신 고혜택 청년 지원 정책 소식",
+                "region_name": "최신 알짜 청년 지원금 & 모집 공고 소식",
                 "subsidies": selected
             }
 
-    # 2. RSS 실패 또는 모두 중복일 경우 youth_db.json 스캔
+    # 2. RSS 예외 시 youth_db.json 스캔
     print("💡 youth_db.json 파일에서 중복 없는 신규 데이터를 찾습니다.")
     db_file = "youth_db.json"
     if os.path.exists(db_file):
