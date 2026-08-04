@@ -62,11 +62,8 @@ def is_valid_policy(title, pub_dt):
 
     return True
 
-def calculate_priority_score(item):
+def calculate_priority_score(title, pub_dt):
     """금액 규모(60%) + 최신성(40%) 가중치 계산"""
-    title = item["title"]
-    pub_dt = item["pub_dt"]
-
     money_score = extract_monetary_value(title)
     recency_score = 0
     if pub_dt:
@@ -77,7 +74,7 @@ def calculate_priority_score(item):
     return (money_score * 0.6) + (recency_score * 0.4)
 
 def fetch_rss_from_url(url):
-    """RSS URL을 안전하게 수집하는 공통 함수 (503 차단 방지 헤더 적용)"""
+    """RSS URL 안전 수집 함수"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'application/xml, text/xml, */*; q=0.01',
@@ -90,12 +87,10 @@ def fetch_rss_from_url(url):
 def fetch_rss_news():
     """
     1차: 구글 뉴스 RSS
-    2차: 대한민국 정책브리핑 RSS (구글 503 에러 시 자동 백업 우회)
+    2차: 대한민국 정책브리핑 RSS
     """
     rss_urls = [
-        # 1차: 구글 뉴스 RSS
         f"https://news.google.com/rss/search?q={urllib.parse.quote('청년 지원금 OR 청년수당 OR 청년정책')}&hl=ko&gl=KR&ceid=KR:ko",
-        # 2차: 대한민국 정책브리핑 (정부 공식 RSS)
         "https://www.korea.kr/rss/policy.xml"
     ]
 
@@ -127,21 +122,27 @@ def fetch_rss_news():
                 if not is_valid_policy(clean_title, pub_dt):
                     continue
 
+                p_score = calculate_priority_score(clean_title, pub_dt)
+
                 candidate = {
                     "title": clean_title,
                     "target": "해당 지자체 및 정부 지원 정책 대상 청년",
                     "amount": "최신 공식 공고문 및 보도자료 지원 규모 참조",
                     "deadline": "상시 / 지정 모집 기간 (공식 공고 확인 필수)",
                     "apply_path": link if link else "공식 신청 사이트 및 지자체 포털",
-                    "secret_tip": "최신 공식 보도 소식입니다. 지원 자격 및 세부 일정은 공식 공고문 확인이 필요합니다.",
-                    "pub_dt": pub_dt
+                    "secret_tip": f"보도 시각: {pub_date_str[:16] if pub_date_str else '최신'} | 공식 보도자료 내용 기반입니다.",
+                    "priority_score": p_score
                 }
-
-                candidate["priority_score"] = calculate_priority_score(candidate)
                 candidates.append(candidate)
 
             if candidates:
+                # 가중치 높음 순으로 정렬
                 candidates.sort(key=lambda x: x["priority_score"], reverse=True)
+                
+                # JSON 직렬화에 원인을 제공하는 priority_score 키 제거
+                for c in candidates:
+                    c.pop("priority_score", None)
+
                 print(f"✅ RSS 수집 성공! ({len(candidates)}개 수집됨)")
                 return candidates
 
@@ -160,7 +161,6 @@ def get_subsidy_data():
     news_items = fetch_rss_news()
 
     if news_items:
-        # 이미 블로그에 올렸던 제목은 엄격하게 제거
         unposted = [s for s in news_items if s["title"] not in past_text]
 
         if unposted:
@@ -194,7 +194,7 @@ def get_subsidy_data():
         except Exception as e:
             print(f"⚠️ youth_db.json 읽기 예외: {e}")
 
-    # 3. 비상 백업 DB (중복 체크 필수 적용)
+    # 3. 비상 백업 DB
     backup_pool = [
         {
             "title": "2026 청년도약계좌 (정부 기여금+비과세 혜택)",
