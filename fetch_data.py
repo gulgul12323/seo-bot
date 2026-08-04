@@ -32,21 +32,16 @@ def get_already_posted_text():
     return posted_text
 
 def extract_monetary_value(text):
-    """
-    텍스트 내 금액 수치(억 원, 만 원, 월 XX만 원)를 파싱하여 금액 가중치 점수를 환산합니다.
-    """
+    """텍스트 내 금액 수치(억 원, 만 원, 월 XX만 원)를 파싱하여 금액 가중치 점수를 환산합니다."""
     score = 0
-    # '억' 단위 수치 추출 (예: 1억 = 10,000점)
     eok_matches = re.findall(r'(\d+(?:\.\d+)?)\s*억', text)
     for m in eok_matches:
         score += float(m) * 10000
 
-    # '만원' 단위 수치 추출 (예: 300만원 = 300점)
     man_matches = re.findall(r'(\d+(?:\.\d+)?)\s*만\s*원', text)
     for m in man_matches:
         score += float(m)
 
-    # '월 XX만원' 매칭 시 연간 가치 감안 가속 가중치 (예: 월 50만 -> 300점)
     month_matches = re.findall(r'월\s*(\d+(?:\.\d+)?)\s*만', text)
     for m in month_matches:
         score += float(m) * 6
@@ -54,16 +49,11 @@ def extract_monetary_value(text):
     return score
 
 def is_valid_policy(title, pub_dt):
-    """
-    기한 엄수 및 유효성 검증 함수:
-    이미 마감되었거나 60일 이상 지난 오래된 정보는 제외합니다.
-    """
-    # 1. 마감/종료 관련 키워드가 제목에 들어간 경우 즉시 제외
+    """기한 만료 및 이미 마감된 소식 제외"""
     expired_keywords = ["마감", "종료", "선발 완료", "접수 마감", "모집 완료", "완료"]
     if any(kw in title for kw in expired_keywords):
         return False
 
-    # 2. 발행일 기준 60일 초과된 구형 소식 제외
     if pub_dt:
         now = datetime.now(timezone.utc)
         days_diff = (now - pub_dt).days
@@ -73,128 +63,138 @@ def is_valid_policy(title, pub_dt):
     return True
 
 def calculate_priority_score(item):
-    """
-    지원금 절댓값 규모(60%) + 소식의 최신성(40%)을 결합한 가중치 종합 점수를 계산합니다.
-    """
+    """금액 규모(60%) + 최신성(40%) 가중치 계산"""
     title = item["title"]
     pub_dt = item["pub_dt"]
 
-    # 1. 지원금액 규모 가중치
     money_score = extract_monetary_value(title)
-
-    # 2. 최신성 가중치 (최근 보도일수록 높은 점수)
     recency_score = 0
     if pub_dt:
         now = datetime.now(timezone.utc)
         hours_ago = max(0, (now - pub_dt).total_seconds() / 3600)
-        recency_score = max(0, 100 - (hours_ago / 2))  # 24시간 이내 최상위, 시간 지날수록 점수 감점
+        recency_score = max(0, 100 - (hours_ago / 2))
 
-    # 종합 가중치 점수 합산 (금액 반영비율 60% + 최신성 반영비율 40%)
-    total_score = (money_score * 0.6) + (recency_score * 0.4)
-    return total_score
+    return (money_score * 0.6) + (recency_score * 0.4)
+
+def fetch_rss_from_url(url):
+    """RSS URL을 안전하게 수집하는 공통 함수 (503 차단 방지 헤더 적용)"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/xml, text/xml, */*; q=0.01',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=12) as response:
+        return response.read().decode('utf-8')
 
 def fetch_rss_news():
     """
-    구글 뉴스 RSS에서 '청년 지원금/수당/정책' 최신 뉴스를 수집하고 가중치순으로 정렬합니다.
+    1차: 구글 뉴스 RSS
+    2차: 대한민국 정책브리핑 RSS (구글 503 에러 시 자동 백업 우회)
     """
-    query = "청년 지원금 OR 청년수당 OR 청년정책 지원"
-    encoded_query = urllib.parse.quote(query)
-    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+    rss_urls = [
+        # 1차: 구글 뉴스 RSS
+        f"https://news.google.com/rss/search?q={urllib.parse.quote('청년 지원금 OR 청년수당 OR 청년정책')}&hl=ko&gl=KR&ceid=KR:ko",
+        # 2차: 대한민국 정책브리핑 (정부 공식 RSS)
+        "https://www.korea.kr/rss/policy.xml"
+    ]
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+    for url in rss_urls:
+        try:
+            print(f"📡 RSS 수집 시도 중: {url[:50]}...")
+            xml_data = fetch_rss_from_url(url)
+            root = ET.fromstring(xml_data)
+            items = root.findall('.//item')
 
-    try:
-        req = urllib.request.Request(rss_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=12) as response:
-            xml_data = response.read().decode('utf-8')
+            candidates = []
+            for item in items:
+                raw_title = item.findtext('title', '').strip()
+                link = item.findtext('link', '').strip()
+                pub_date_str = item.findtext('pubDate', '').strip()
 
-        root = ET.fromstring(xml_data)
-        items = root.findall('.//item')
+                if not raw_title:
+                    continue
 
-        candidates = []
-        for item in items:
-            raw_title = item.findtext('title', '').strip()
-            link = item.findtext('link', '').strip()
-            pub_date_str = item.findtext('pubDate', '').strip()
+                clean_title = raw_title.split(' - ')[0] if ' - ' in raw_title else raw_title
 
-            if not raw_title:
-                continue
+                pub_dt = None
+                if pub_date_str:
+                    try:
+                        pub_dt = parsedate_to_datetime(pub_date_str)
+                    except Exception:
+                        pass
 
-            # 제목 정제 (언론사명 분리)
-            clean_title = raw_title.split(' - ')[0] if ' - ' in raw_title else raw_title
+                if not is_valid_policy(clean_title, pub_dt):
+                    continue
 
-            # 작성 날짜 파싱
-            pub_dt = None
-            if pub_date_str:
-                try:
-                    pub_dt = parsedate_to_datetime(pub_date_str)
-                except Exception:
-                    pass
+                candidate = {
+                    "title": clean_title,
+                    "target": "해당 지자체 및 정부 지원 정책 대상 청년",
+                    "amount": "최신 공식 공고문 및 보도자료 지원 규모 참조",
+                    "deadline": "상시 / 지정 모집 기간 (공식 공고 확인 필수)",
+                    "apply_path": link if link else "공식 신청 사이트 및 지자체 포털",
+                    "secret_tip": "최신 공식 보도 소식입니다. 지원 자격 및 세부 일정은 공식 공고문 확인이 필요합니다.",
+                    "pub_dt": pub_dt
+                }
 
-            # [엄격 검증] 기한 만료 및 유효성 확인
-            if not is_valid_policy(clean_title, pub_dt):
-                continue
+                candidate["priority_score"] = calculate_priority_score(candidate)
+                candidates.append(candidate)
 
-            candidate = {
-                "title": clean_title,
-                "target": "해당 지자체 및 정부 지원 정책 대상 청년",
-                "amount": "최신 공식 공고문 및 보도자료 지원 규모 참조",
-                "deadline": "상시 / 지정 모집 기간 (공식 공고 확인 필수)",
-                "apply_path": link if link else "공식 신청 사이트 및 지자체 포털",
-                "secret_tip": "최신 공식 보도 소식입니다. 지원 자격 및 세부 일정은 공식 공고문 확인이 필요합니다.",
-                "pub_dt": pub_dt
-            }
+            if candidates:
+                candidates.sort(key=lambda x: x["priority_score"], reverse=True)
+                print(f"✅ RSS 수집 성공! ({len(candidates)}개 수집됨)")
+                return candidates
 
-            # [가중치 산출] 금액 크기 + 최신성 가중치 점수 합산
-            candidate["priority_score"] = calculate_priority_score(candidate)
-            candidates.append(candidate)
+        except Exception as e:
+            print(f"⚠️ RSS 수집 실패 ({url[:30]}...): {e}")
 
-        # 가중치 점수가 높은 순(내림차순)으로 최고 우선순위 항목 정렬
-        candidates.sort(key=lambda x: x["priority_score"], reverse=True)
-        return candidates
-
-    except Exception as e:
-        print(f"⚠️ RSS 수집 중 예외 발생: {e}")
-        return None
+    return None
 
 def get_subsidy_data():
     """
-    1순위: 기한 및 가중치(최신성+지원금액) 검증을 거친 실시간 RSS 소식 선택
-    2순위: 수집 예외 발생 시 비상 백업 DB 활용
+    실시간 RSS ➔ 실패 시 youth_db.json ➔ 중복 엄격 필터링
     """
     past_text = get_already_posted_text()
 
-    print("📡 최신성 및 지원금액 가중치 반영 실시간 RSS 데이터 수집 중...")
+    # 1. 실시간 RSS 수집
     news_items = fetch_rss_news()
 
     if news_items:
-        # 이미 발행된 포스팅 제외
+        # 이미 블로그에 올렸던 제목은 엄격하게 제거
         unposted = [s for s in news_items if s["title"] not in past_text]
 
         if unposted:
-            # 가중치 점수가 가장 높은 상위 3개 선정
             selected_count = min(3, len(unposted))
             selected = unposted[:selected_count]
-            print(f"✨ [우선순위 가중치 알고리즘] 가장 혜택이 크고 최신인 지원금 {selected_count}개 선택 완료!")
-            return {
-                "scope_type": "national",
-                "region_name": "최신 고혜택 청년 지원 정책 소식",
-                "subsidies": selected
-            }
-        else:
-            selected_count = min(3, len(news_items))
-            selected = news_items[:selected_count]
-            print("🔄 [실시간 RSS] 모든 뉴스가 이미 작성되어 순환 선택했습니다.")
+            print(f"✨ [우선순위 RSS] 중복 없는 신규 지원금 {selected_count}개 선택 완료!")
             return {
                 "scope_type": "national",
                 "region_name": "최신 고혜택 청년 지원 정책 소식",
                 "subsidies": selected
             }
 
-    # 2. RSS 통신 예외 시 비상 백업 DB
-    print("💡 RSS 통신 예외 발생으로 백업 DB를 선택합니다.")
+    # 2. RSS 실패 또는 모두 중복일 경우 youth_db.json 스캔
+    print("💡 youth_db.json 파일에서 중복 없는 신규 데이터를 찾습니다.")
+    db_file = "youth_db.json"
+    if os.path.exists(db_file):
+        try:
+            with open(db_file, "r", encoding="utf-8") as f:
+                db_pool = json.load(f)
+
+            unposted_db = [s for s in db_pool if s.get("title") and s.get("title") not in past_text]
+            if unposted_db:
+                selected_count = min(3, len(unposted_db))
+                selected = random.sample(unposted_db, selected_count)
+                print(f"✨ [youth_db.json] 중복 없는 신규 지원금 {selected_count}개 선택 완료!")
+                return {
+                    "scope_type": "national",
+                    "region_name": "전국 주요 청년 지원 정책",
+                    "subsidies": selected
+                }
+        except Exception as e:
+            print(f"⚠️ youth_db.json 읽기 예외: {e}")
+
+    # 3. 비상 백업 DB (중복 체크 필수 적용)
     backup_pool = [
         {
             "title": "2026 청년도약계좌 (정부 기여금+비과세 혜택)",
@@ -211,16 +211,29 @@ def get_subsidy_data():
             "deadline": "상시 과정 개설",
             "apply_path": "고용24 홈페이지",
             "secret_tip": "전공 상관없이 문과생도 신청 가능."
+        },
+        {
+            "title": "2026 청년월세 특별지원 (월 최대 20만 원)",
+            "target": "만 19세~34세 무주택 청년",
+            "amount": "월 최대 20만 원씩 12개월(최대 240만 원) 지원",
+            "deadline": "연중 상시 접수",
+            "apply_path": "복지로 홈페이지 또는 주민센터",
+            "secret_tip": "청년 독립 가구 소득 기준 확인 필수."
         }
     ]
+
+    unposted_backup = [s for s in backup_pool if s["title"] not in past_text]
+    if unposted_backup:
+        selected = random.sample(unposted_backup, min(3, len(unposted_backup)))
+    else:
+        selected = random.sample(backup_pool, min(3, len(backup_pool)))
 
     return {
         "scope_type": "national",
         "region_name": "전국 주요 청년 지원 정책",
-        "subsidies": backup_pool
+        "subsidies": selected
     }
 
-# 별칭 설정
 fetch_subsidy_data = get_subsidy_data
 
 if __name__ == "__main__":
